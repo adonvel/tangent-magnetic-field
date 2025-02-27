@@ -457,3 +457,193 @@ def solve_eigenproblem_rectangle(parameters, energy = 1e-6, number_of_bands = 10
             energies[i] = eigenvalues[i]
     
     return energies, states_shaped, degenerate_indices
+
+######################################## RECTANGLE
+
+def generate_ribbon(Lx, Ly, plot_shape = False):
+    '''Generates the set of points in the grid closest to a ribbon with sides Lx and Ly and the angle of the normal vector.
+    The boundaries are only in y direction. The ribbon is infinite in x direction.
+    - Lx: int
+    - Ly: int
+    - plot_shape: bool
+    Returns
+    - boundary_points: ndarray (2,2*Lx)
+    - normal_angles: ndarray (2*Lx)'''
+
+    x2 = np.linspace(Lx-1,-1, Lx, endpoint = False)
+    y2 = Ly*np.ones(Lx)
+    angles2 = (pi/2)*np.ones(Lx)
+    
+    x4 = np.linspace(0,Lx, Lx, endpoint = False)
+    y4 = np.zeros(Lx)
+    angles4 = -(pi/2)*np.ones(Lx)
+
+    x = np.concatenate((x2,x4))
+    y = np.concatenate((y2,y4))
+
+    
+    normal_angles = np.concatenate((angles2,angles4))
+    boundary_points = np.stack((x,y))
+    
+    return boundary_points, normal_angles
+
+def operators_ribbon(parameters, return_shape = False):
+    '''
+    Returns operators Phi, H and P for a ribbon in x direction
+    geometry boundary conditions are independent on each side.
+    -parameters: dict
+    -return_shape = bool
+    Returns
+    -Phi: csc_matrix (2*Lx*Ly-2*(Lx+Ly-2)-4,2*Lx*Ly-2*(Lx+Ly-2)-4)
+    -H: csc_matrix (2*Lx*Ly-2*(Lx+Ly-2)-4,2*Lx*Ly-2*(Lx+Ly-2)-4)
+    -P: csc_matrix (2*Lx*Ly-2*(Lx+Ly-2)-4,2*Lx*Ly-2*(Lx+Ly-2)-4)
+    -indices_to_delete: list
+    '''
+    #The parameters dictionary must have the following key,value pairs
+    theta_bot = parameters['theta_bot'] #float in (-pi,pi] Boundary condition angle on the bottom
+    theta_top = parameters['theta_top'] #float in (-pi,pi] Boundary condition angle on the top
+    kx = parameters['kx']       # float in (-pi/pi] wavenumber in x direction
+    gap = parameters['mass']    #float Mass gap
+    Lx = parameters['Lx']       #int Number of lattice sites in x direction
+    Ly = parameters['Ly']       #int Number of lattice sites in y direction
+    Nx = Lx #######Notice the difference here with respect to the rectangle
+    Ny = Ly+1
+    a_e = parameters['a_e']   #ndarray(Ly+1,Lx) Peierls phases to the right 
+    a_n = parameters['a_n']   #ndarray(Ly, Lx+1) Peierls phases up
+    #Attach zeros to the Peierls phases to fix their size. Only to the up ones this time.
+    a_n = np.concatenate([a_n,np.zeros((1,Lx+1))],axis = 0)
+
+    row_Tx = []
+    col_Tx = []
+    data_Tx = []
+    
+    row_Ty = []
+    col_Ty = []
+    data_Ty = []
+
+    
+    for i in range(Nx*Ny):
+        y = i//Nx
+        x = i%Nx
+                
+        #Phases
+        phase_e = np.exp(1j*a_e[y,x])*np.exp(-1j*kx*Nx*(1 if x==Nx-1 else 0)) #We added the Bloch phase for x == Nx-1
+        phase_n = np.exp(1j*a_n[y,x])
+        
+        row_Tx += [i]
+        col_Tx += [((x+1)%Nx) + y*Nx]
+        data_Tx += [phase_e] ## Here we keep periodic boundary conditions
+        
+        row_Ty += [i]
+        col_Ty += [x + ((y+1)%Ny)*Nx]
+        data_Ty += [phase_n*(1-(y//(Ny-1)))] ################## Open boundaries in y direction
+        
+    # Sparse matrices corresponding to translation operators
+    Tx = csc_matrix((data_Tx, (row_Tx, col_Tx)), shape = (Nx*Ny, Nx*Ny))
+    Ty = csc_matrix((data_Ty, (row_Ty, col_Ty)), shape = (Nx*Ny, Nx*Ny))
+    one = scipy.sparse.identity(Nx*Ny)
+    
+    phi_x = (Tx+one)/2
+    phi_y = (Ty+one)/2
+    sin_x = -(1j/2)*(Tx-Tx.H)
+    sin_y = -(1j/2)*(Ty-Ty.H)
+    
+    hx = phi_y.H@sin_x@phi_y
+    hy = phi_x.H@sin_y@phi_x
+    phi = (phi_x@phi_y+phi_y@phi_x)/2
+       
+    mass = scipy.sparse.spdiags(gap*np.ones(Nx*Ny), 0, Nx*Ny, Nx*Ny, format = "csc")
+    M = scipy.sparse.kron(csc_matrix(sigma_z), mass, format = "csc")
+    
+    H_0 = scipy.sparse.kron(csc_matrix(sigma_x), hx, format = "csc") + scipy.sparse.kron(csc_matrix(sigma_y), hy, format = "csc")
+    Phi = scipy.sparse.kron(csc_matrix(sigma_0), phi, format = "csc")
+
+    H = H_0 + Phi.H@M@Phi
+        
+    # Unitary transformation on the edges. Let us build a rotation matrix that acts on a single site.
+    def spin_rotation(site, theta, phi):
+        'Unitary transformation that rotates the spin site to a (theta,phi) orientation'
+        rotation = np.identity(2*Nx*Ny, dtype = complex)
+        
+        spinup = int(site[0] + site[1]*Nx)
+        spindown = int(site[0] + site[1]*Nx + Nx*Ny)
+        
+        rotation[spinup,spinup] = np.cos(theta/2)
+        rotation[spinup,spindown] = np.sin(theta/2)
+        rotation[spindown,spinup] = -np.sin(theta/2)*np.exp(1j*phi)
+        rotation[spindown,spindown] = np.cos(theta/2)*np.exp(1j*phi)
+        
+        return csc_matrix(rotation)
+        
+    # Now rotate the spins on the edge
+    def get_index(x,y,s):
+        '''Returns the index of the orbital in x,y with spin s'''
+        return int(Nx*Ny*s + Nx*y + x)
+
+    edge_points, normal_angles = generate_ribbon(Lx, Ly)
+    # The parameter that we need for the spin rotation is the projection of the boundary spin o the plane, so the normal plus pi/2.
+    boundary_spin_projections = normal_angles + np.ones(len(normal_angles))*pi/2
+    
+    indices_to_delete = []
+    ##### We can make theta also an array in order to assign different values to each boundary
+    theta = np.concatenate((theta_top*np.ones(Lx), theta_bot*np.ones(Lx)))
+    for point in zip(edge_points[0], edge_points[1], theta, boundary_spin_projections):
+        
+        #rotate
+        rotation = spin_rotation([point[0],point[1]], point[2], point[3]) 
+        H = rotation.H@H@rotation
+        Phi = rotation.H@Phi@rotation
+        
+        #book index to delete
+        indices_to_delete.append(get_index(point[0],point[1],1))
+
+    #Now we also have to delete the outer part
+    amount_out = 0
+    def discriminant(x,y):
+        return y>0 and y<Ly
+        
+    X,Y = np.meshgrid(np.arange(0,Nx),np.arange(0,Ny))
+    for x,y in zip(X.ravel(),Y.ravel()):
+        if not discriminant(x,y) and  get_index(x,y,1) not in indices_to_delete:
+            indices_to_delete.append(get_index(x,y,0))
+            indices_to_delete.append(get_index(x,y,1))
+            amount_out += 1
+
+            
+    # Transforming the sparse matrix into dense to delete spins
+    H_aux = H.toarray()
+    Phi_aux = Phi.toarray()
+   
+    H_aux = np.delete(H_aux, indices_to_delete, axis=0)
+    H_aux = np.delete(H_aux, indices_to_delete, axis=1)
+    
+    Phi_aux = np.delete(Phi_aux, indices_to_delete, axis=0)
+    Phi_aux = np.delete(Phi_aux, indices_to_delete, axis=1)
+        
+    H = csc_matrix(H_aux)
+    Phi = csc_matrix(Phi_aux)
+    P = Phi.H@Phi
+
+    if return_shape:
+        inside_indices = np.delete(np.arange(2*Nx*Ny), indices_to_delete)
+        inside_x = inside_indices%(np.ones(len(inside_indices))*Nx)
+        inside_y = (inside_indices//(np.ones(len(inside_indices))*Nx))%(np.ones(len(inside_indices))*Ny)
+        inside_s = inside_indices//(np.ones(len(inside_indices))*Nx*Ny)
+    
+        return Phi, H, P, indices_to_delete, (inside_x[Nx*Ny-amount_out:],inside_y[Nx*Ny-amount_out:]), (inside_x[:Nx*Ny-amount_out],inside_y[:Nx*Ny-amount_out])
+    else:
+        return Phi, H, P, indices_to_delete
+
+def make_bands_x(parameters, number_of_bands = int(20), number_of_points = int(101), kmin = -pi, kmax = pi):
+    '''Calculate bands in x direction for the ribbon.'''
+
+    momenta = np.linspace(kmin,kmax, num = number_of_points)
+    bands = np.zeros((number_of_points,number_of_bands))
+    
+    #Solve generalised eigenproblem for all kx
+    for j, kx in enumerate(momenta):
+        parameters['kx'] = kx
+        Phi, H, P, deleted_indices = operators_ribbon(parameters)
+        bands[j] = sla.eigsh(H, M=P, k = number_of_bands, tol = 1e-7, sigma = 0.0000001, which = 'LM',return_eigenvectors = False)
+
+    return momenta, bands
