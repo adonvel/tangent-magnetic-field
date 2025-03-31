@@ -506,10 +506,12 @@ def operators_ribbon(parameters, return_shape = False):
     gap = parameters['mass']    #float Mass gap
     Lx = parameters['Lx']       #int Number of lattice sites in x direction
     Ly = parameters['Ly']       #int Number of lattice sites in y direction
+    mag_field = parameters['mag_field']       #int Number of lattice sites in y direction
     Nx = Lx #######Notice the difference here with respect to the rectangle
     Ny = Ly+1
-    a_e = parameters['a_e']   #ndarray(Ly+1,Lx) Peierls phases to the right 
-    a_n = parameters['a_n']   #ndarray(Ly, Lx+1) Peierls phases up
+
+    fluxes = mag_field*np.ones((Ly,1))
+    a_e, a_n = vector_potential(1,Ly,fluxes, gauge = "Landau")
     #Attach zeros to the Peierls phases to fix their size. Only to the up ones this time.
     a_n = np.concatenate([a_n,np.zeros((1,Lx+1))],axis = 0)
 
@@ -647,3 +649,112 @@ def make_bands_x(parameters, number_of_bands = int(20), number_of_points = int(1
         bands[j] = sla.eigsh(H, M=P, k = number_of_bands, tol = 1e-7, sigma = 0.0000001, which = 'LM',return_eigenvectors = False)
 
     return momenta, bands
+
+
+######################################## GRAPHENE
+
+def graphene_magnetic_ribbon(parameters):
+    '''
+    Returns the Hamiltonian for a ribbon 
+    geometry with zigzag boundary conditions
+    in a uniform magnetic field.
+    In this case the units are given by a = 1 (y = 3a), hbar = 1, e = 1, v_F = 3/2 (from t = 1 and v_f = 3/2(t*a/hbar))
+    -parameters: dict
+    Returns
+    -H: numpy matrix of size 4*width-2+bottom_bearded+top_bearded
+    '''
+    #The parameters dictionary must have the following key,value pairs
+    width = parameters['width']       #int Number of lattice unit cells in y direction. Each cell contains 4 sites and it is 3a long
+    kx = parameters['kx']*np.sqrt(3)             # float in (-pi/pi] wavenumber in x direction. The sqrt(3) is because the x-direction lattice site is sqrt(3)a long.
+                                                 # This war parameters['k_x'] has units of 1/a
+    bottom_bearded = parameters['bottom_bearded'] #bool type of zigzag bc at the bottom
+    top_bearded = parameters['top_bearded']       #bool type of zigzag bc at the top
+    mag_field = parameters['mag_field']           #float magnetic field
+    
+    peierls_factor = np.sqrt(3)/2*mag_field*3 #The 3 is because the y-direction lattice site is 3a long
+
+    hamiltonian = np.zeros((4*width-2+bottom_bearded+top_bearded,4*width-2+bottom_bearded+top_bearded),dtype = complex)
+
+    def index(orbital,y):
+        return orbital + 4*y-1+bottom_bearded
+    ### We have 4 orbitals
+    for y in range(width):
+        if y!=0 or bottom_bearded:
+            hamiltonian[index(0,y),index(1,y)] = -1
+            hamiltonian[index(1,y),index(0,y)] = -1
+        
+        hamiltonian[index(1,y),index(2,y)] = -1*np.exp(1j*peierls_factor*(y-width/2)) - np.exp(-1j*kx)*np.exp(-1j*peierls_factor*(y-width/2))
+        hamiltonian[index(2,y),index(1,y)] = -1*np.exp(-1j*peierls_factor*(y-width/2)) - np.exp(1j*kx)*np.exp(1j*peierls_factor*(y-width/2))
+
+        if y!=width-1 or top_bearded:
+            hamiltonian[index(2,y),index(3,y)] = -1
+            hamiltonian[index(3,y),index(2,y)] = -1
+
+        if y!=width-1:
+            hamiltonian[index(3,y),index(0,y+1)] = -1*np.exp(-1j*peierls_factor*(y+0.5-width/2)) - np.exp(1j*kx)*np.exp(1j*peierls_factor*(y+0.5-width/2))
+            hamiltonian[index(0,y+1),index(3,y)] = -1*np.exp(1j*peierls_factor*(y+0.5-width/2)) - np.exp(-1j*kx)*np.exp(-1j*peierls_factor*(y+0.5-width/2))
+
+    return hamiltonian*2/3 #Adjusting units so that the fermi velocity is equal to 1
+
+def graphene_bands(parameters,npoints):
+    '''
+    Finds the spectrum of a graphene nanoribbon
+    with zigzag boundary conditions
+    in a uniform magnetic field.
+    In this case the units are given by a = 1 (y = 3a), hbar = 1, e = 1, v_F = 3/2 (from t = 1 and v_f = 3/2(t*a/hbar))
+    -parameters: dict
+    -npoints: int number of points calculated
+    Returns
+    -momenta: numpy array of size npoints
+    -bands: numpy matrix of size 4*width-2+bottom_bearded+top_bearded, npoints
+    '''
+    bands = []
+    momenta = np.linspace(-pi/np.sqrt(3),pi/np.sqrt(3),npoints)
+    for kx in momenta:
+        parameters['kx'] = kx
+        hamiltonian = graphene_magnetic_ribbon(parameters)
+        spectrum = np.linalg.eigvalsh(hamiltonian)
+        bands.append(spectrum)
+        #bands.append(spectrum[np.argsort(np.abs(spectrum))]) #Sorted by distance to E=0
+    bands = np.array(bands)
+
+    return momenta, bands
+
+def graphene_states(parameters,kpoint):
+    '''Finds the an eigenstate of a graphene nanoribbon
+    with zigzag boundary conditions
+    in a uniform magnetic field.
+    In this case the units are given by a = 1 (y = 3a), hbar = 1, e = 1, v_F = 3/2 (from t = 1 and v_f = 3/2(t*a/hbar))
+    -parameters: dict
+    -kpoint: float wavenumber in x direction
+    Returns
+    -eigenvalues: numpy array of size 4*width-2+bottom_bearded+top_bearded
+    -eigenvalues: numpy tensor of size 4,width,4*width-2+bottom_bearded+top_bearded'''
+    parameters['kx'] = kpoint
+    hamiltonian = graphene_magnetic_ribbon(parameters)
+    eigenvalues, eigenvectors = np.linalg.eigh(hamiltonian)
+    order = np.argsort(np.abs(eigenvalues))  #Sorted by distance to E=0
+    eigenvalues = eigenvalues[order]
+    eigenvectors = eigenvectors[:,order]
+    
+    norms = np.sum(np.abs(eigenvectors)**2, axis = 0)
+    for i in range(eigenvectors.shape[1]):
+        eigenvectors[:,i] = eigenvectors[:,i]/norms[i]
+    
+    # If not bearded, we refill
+    if not parameters['bottom_bearded']:
+        eigenvectors = np.roll(np.concatenate((eigenvectors,np.zeros((1,4*parameters['width']-2+parameters['bottom_bearded']+parameters['top_bearded']))), axis = 0),1,axis = 0)
+    if not parameters['top_bearded']:
+        eigenvectors = np.concatenate((eigenvectors,np.zeros((1,4*parameters['width']-2+parameters['bottom_bearded']+parameters['top_bearded']))), axis = 0)
+    
+    # Reshape
+    psi0 = eigenvectors[::4]
+    psi1 = eigenvectors[1::4]
+    psi2 = eigenvectors[2::4]
+    psi3 = eigenvectors[3::4]
+    eigenvectors = np.stack((psi0,psi1,psi2,psi3))
+    
+    order = np.argsort(np.abs(eigenvalues))  #Sorted by distance to E=0
+    
+
+    return eigenvalues, eigenvectors
