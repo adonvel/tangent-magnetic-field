@@ -650,6 +650,100 @@ def make_bands_x(parameters, number_of_bands = int(20), number_of_points = int(1
 
     return momenta, bands
 
+def tangent_states(parameters, kpoint,number_of_bands = int(20)):
+    '''Finds the an eigenstates of a tangent fermions nanoribbon
+    with zigzag boundary conditions in a magnetic field.
+    The units are given by a = 1, hbar = 1, e = 1, v_F = 1
+    -parameters: dict
+    -kpoint: float wavenumber in x direction
+    -number_of_bands: number of eigenstates calculated
+    Returns
+    -energies: numpy array of size number_of_bands
+    -states_shaped: numpy tensor of shape (number_of_bands,2,Ny,Nx)
+    -degenerate_indices: list of states indices that are degenerate'''
+    parameters['kx'] = kpoint
+    theta_bot = parameters['theta_bot'] #float in (-pi,pi] Boundary condition angle on the bottom
+    theta_top = parameters['theta_top'] #float in (-pi,pi] Boundary condition angle on the top
+    Nx = parameters['Lx']
+    Ny = parameters['Ly']+1
+    #Solve generalised eigenproblem 
+    Phi, H, P, deleted_indices = operators_ribbon(parameters)
+    eigenvalues, eigenvectors = sla.eigsh(H, M=P, k = number_of_bands, tol = 1e-7, sigma = 0.0000001, which = 'LM',return_eigenvectors = True)
+
+    #Refill with zeros the deleted spins
+    states = np.zeros((2*Nx*Ny,number_of_bands),dtype = complex)
+    count = 0
+    for index in range(2*Nx*Ny):
+        if index not in deleted_indices:
+            states[index] = (Phi@eigenvectors)[index-count]
+        else:
+            count += 1
+
+    #Now make sure they are orthogonal
+    overlaps = states.conjugate().transpose()@states
+    ##The overlap can only be non-zero for degenerate states
+    degenerate_indices = []
+    bulk_indices = []    
+    for i in range(overlaps.shape[0]):
+        sorted = np.flip(np.sort(np.abs(overlaps[i])))
+        if sorted[1]/sorted[0]<0.1: #This threshold (0.1) is a bit arbitrary
+            bulk_indices.append(i)
+        else:
+            degenerate_indices.append(i)
+
+    overlaps_deg = np.delete(overlaps, bulk_indices, axis=0)
+    overlaps_deg = np.delete(overlaps_deg, bulk_indices, axis=1)
+    overlaps_bulk = np.delete(overlaps, degenerate_indices, axis=0)
+    overlaps_bulk = np.delete(overlaps_bulk, degenerate_indices, axis=1)
+
+    states_deg = np.delete(states, bulk_indices, axis=1)
+    states_bulk = np.delete(states, degenerate_indices, axis=1)
+
+    evalues, orthogonal_coeff = np.linalg.eigh(overlaps_deg)
+    orthogonal = np.append(states_deg@orthogonal_coeff, states_bulk , axis=1) #### These are finally the orthogonalised states
+    norm = np.sqrt(np.diag(np.abs(orthogonal.conjugate().transpose()@orthogonal)))
+    states = orthogonal/norm[None,:]
+    
+    # Rebuild state
+    def spin_rotation(site, theta, phi):
+        '''Returns a unitary transformation matrix that rotates the spin site to a theta,phi orientation'''
+        rotation = np.identity(2*Nx*Ny, dtype = complex)
+        
+        spinup = int(site[0] + site[1]*Nx)
+        spindown = int(site[0] + site[1]*Nx + Nx*Ny)
+        
+        rotation[spinup,spinup] = np.cos(theta/2)
+        rotation[spinup,spindown] = np.sin(theta/2)
+        rotation[spindown,spinup] = -np.sin(theta/2)*np.exp(1j*phi)
+        rotation[spindown,spindown] = np.cos(theta/2)*np.exp(1j*phi)
+        
+        return csc_matrix(rotation)
+        
+    # We need to generate again the shape in order to refill the deleted sites
+    edge_points, normal_angles = generate_ribbon(Nx, Ny-1)
+    # The parameter that we need for the spin rotation is the projection of the boundary spin on the plane, so the normal plus pi/2.
+    boundary_spin_projections = normal_angles + np.ones(len(normal_angles))*pi/2
+
+     # Rotate back the spins on the edge
+    theta = np.concatenate((theta_top*np.ones(Nx), theta_bot*np.ones(Nx)))
+    for point in zip(edge_points[0], edge_points[1], theta, boundary_spin_projections):
+        #rotate
+        rotation = spin_rotation([point[0],point[1]], point[2], point[3]) 
+        states = rotation@states
+
+    ### Reshape
+    states_shaped = np.reshape(states.flatten('F'), newshape = (number_of_bands,2,Ny,Nx), order = 'C')
+
+    ### Assign again energies
+    energies = np.zeros(number_of_bands)
+    for i in range(number_of_bands):
+        if i in degenerate_indices:
+            energies[i] = 0
+        else:
+            energies[i] = eigenvalues[i]
+
+    return energies, states_shaped, degenerate_indices
+
 
 ######################################## GRAPHENE
 
@@ -658,7 +752,7 @@ def graphene_magnetic_ribbon(parameters):
     Returns the Hamiltonian for a ribbon 
     geometry with zigzag boundary conditions
     in a uniform magnetic field.
-    In this case the units are given by a = 1 (y = 3a), hbar = 1, e = 1, v_F = 3/2 (from t = 1 and v_f = 3/2(t*a/hbar))
+    In this case the units are given by a = 1 (y = 3a), hbar = 1, e = 1, v_F = 1
     -parameters: dict
     Returns
     -H: numpy matrix of size 4*width-2+bottom_bearded+top_bearded
@@ -701,7 +795,7 @@ def graphene_bands(parameters,npoints):
     Finds the spectrum of a graphene nanoribbon
     with zigzag boundary conditions
     in a uniform magnetic field.
-    In this case the units are given by a = 1 (y = 3a), hbar = 1, e = 1, v_F = 3/2 (from t = 1 and v_f = 3/2(t*a/hbar))
+    In this case the units are given by a = 1 (y = 3a), hbar = 1, e = 1, v_F = 1
     -parameters: dict
     -npoints: int number of points calculated
     Returns
@@ -724,7 +818,7 @@ def graphene_states(parameters,kpoint):
     '''Finds the an eigenstate of a graphene nanoribbon
     with zigzag boundary conditions
     in a uniform magnetic field.
-    In this case the units are given by a = 1 (y = 3a), hbar = 1, e = 1, v_F = 3/2 (from t = 1 and v_f = 3/2(t*a/hbar))
+    In this case the units are given by a = 1 (y = 3a), hbar = 1, e = 1, v_F = 1
     -parameters: dict
     -kpoint: float wavenumber in x direction
     Returns
@@ -739,7 +833,7 @@ def graphene_states(parameters,kpoint):
     
     norms = np.sum(np.abs(eigenvectors)**2, axis = 0)
     for i in range(eigenvectors.shape[1]):
-        eigenvectors[:,i] = eigenvectors[:,i]/norms[i]
+        eigenvectors[:,i] = eigenvectors[:,i]/norms[i]/np.sqrt(3) #The np.sqrt(3) is because the y direction lattice constant is 3a
     
     # If not bearded, we refill
     if not parameters['bottom_bearded']:
