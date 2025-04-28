@@ -458,7 +458,7 @@ def solve_eigenproblem_rectangle(parameters, energy = 1e-6, number_of_bands = 10
     
     return energies, states_shaped, degenerate_indices
 
-######################################## RECTANGLE
+######################################## RIBBON
 
 def generate_ribbon(Lx, Ly, plot_shape = False):
     '''Generates the set of points in the grid closest to a ribbon with sides Lx and Ly and the angle of the normal vector.
@@ -481,7 +481,6 @@ def generate_ribbon(Lx, Ly, plot_shape = False):
     x = np.concatenate((x2,x4))
     y = np.concatenate((y2,y4))
 
-    
     normal_angles = np.concatenate((angles2,angles4))
     boundary_points = np.stack((x,y))
     
@@ -506,11 +505,13 @@ def operators_ribbon(parameters, return_shape = False):
     gap = parameters['mass']    #float Mass gap
     Lx = parameters['Lx']       #int Number of lattice sites in x direction
     Ly = parameters['Ly']       #int Number of lattice sites in y direction
-    mag_field = parameters['mag_field']       #int Number of lattice sites in y direction
+    mag_field = parameters['mag_field']       #int Magnetic field strength in units hbar/(ea^2)
+    noise = parameters['noise']       #int Magnetic field range in units hbar/(ea^2)
     Nx = Lx #######Notice the difference here with respect to the rectangle
     Ny = Ly+1
 
-    fluxes = mag_field*np.ones((Ly,1))
+    np.random.seed(parameters['seed'])
+    fluxes = mag_field*np.ones((Ly,Lx)) + noise*(np.random.rand(Ly,Lx)-0.5*np.ones((Ly,Lx)))
     a_e, a_n = vector_potential(1,Ly,fluxes, gauge = "Landau")
     #Attach zeros to the Peierls phases to fix their size. Only to the up ones this time.
     a_n = np.concatenate([a_n,np.zeros((1,Lx+1))],axis = 0)
