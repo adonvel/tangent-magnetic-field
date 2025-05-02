@@ -752,7 +752,7 @@ def graphene_magnetic_ribbon(parameters):
     '''
     Returns the Hamiltonian for a ribbon 
     geometry with zigzag boundary conditions
-    in a uniform magnetic field.
+    in a magnetic field.
     In this case the units are given by a = 1 (y = 3a), hbar = 1, e = 1, v_F = 1
     -parameters: dict
     Returns
@@ -765,6 +765,8 @@ def graphene_magnetic_ribbon(parameters):
     bottom_bearded = parameters['bottom_bearded'] #bool type of zigzag bc at the bottom
     top_bearded = parameters['top_bearded']       #bool type of zigzag bc at the top
     mag_field = parameters['mag_field']           #float magnetic field
+    noise = parameters['noise']       #int disorder strength
+    np.random.seed(parameters['seed'])
     
     peierls_factor = np.sqrt(3)/2*mag_field*3 #The 3 is because the y-direction lattice site is 3a long
 
@@ -777,20 +779,22 @@ def graphene_magnetic_ribbon(parameters):
         if y!=0 or bottom_bearded:
             hamiltonian[index(0,y),index(1,y)] = -1
             hamiltonian[index(1,y),index(0,y)] = -1
-        
-        hamiltonian[index(1,y),index(2,y)] = -1*np.exp(1j*peierls_factor*(y-width/2)) - np.exp(-1j*kx)*np.exp(-1j*peierls_factor*(y-width/2))
-        hamiltonian[index(2,y),index(1,y)] = -1*np.exp(-1j*peierls_factor*(y-width/2)) - np.exp(1j*kx)*np.exp(1j*peierls_factor*(y-width/2))
+
+        random_contribution = noise*(np.random.rand(1)[0]-0.5)
+        hamiltonian[index(1,y),index(2,y)] = -1*np.exp(1j*peierls_factor*(y-width/2))*np.exp(1j*random_contribution) - np.exp(-1j*kx)*np.exp(-1j*peierls_factor*(y-width/2))*np.exp(-1j*random_contribution)
+        hamiltonian[index(2,y),index(1,y)] = -1*np.exp(-1j*peierls_factor*(y-width/2))*np.exp(-1j*random_contribution) - np.exp(1j*kx)*np.exp(1j*peierls_factor*(y-width/2))*np.exp(1j*random_contribution)
 
         if y!=width-1 or top_bearded:
             hamiltonian[index(2,y),index(3,y)] = -1
             hamiltonian[index(3,y),index(2,y)] = -1
 
         if y!=width-1:
-            hamiltonian[index(3,y),index(0,y+1)] = -1*np.exp(-1j*peierls_factor*(y+0.5-width/2)) - np.exp(1j*kx)*np.exp(1j*peierls_factor*(y+0.5-width/2))
-            hamiltonian[index(0,y+1),index(3,y)] = -1*np.exp(1j*peierls_factor*(y+0.5-width/2)) - np.exp(-1j*kx)*np.exp(-1j*peierls_factor*(y+0.5-width/2))
+            random_contribution = noise*(np.random.rand(1)[0]-0.5)
+            hamiltonian[index(3,y),index(0,y+1)] = -1*np.exp(-1j*peierls_factor*(y+0.5-width/2))*np.exp(-1j*random_contribution) - np.exp(1j*kx)*np.exp(1j*peierls_factor*(y+0.5-width/2))*np.exp(1j*random_contribution)
+            hamiltonian[index(0,y+1),index(3,y)] = -1*np.exp(1j*peierls_factor*(y+0.5-width/2))*np.exp(1j*random_contribution) - np.exp(-1j*kx)*np.exp(-1j*peierls_factor*(y+0.5-width/2))*np.exp(-1j*random_contribution)
 
     return hamiltonian*2/3 #Adjusting units so that the fermi velocity is equal to 1
-
+    
 def graphene_bands(parameters,npoints):
     '''
     Finds the spectrum of a graphene nanoribbon
