@@ -878,11 +878,14 @@ def graphene_square(parameters):
     noise = parameters['noise']       #int disorder strength
 
     #Let us build the noise array
+    np.random.seed(parameters['seed']) #Set the seed before building the matrix
     fluxes = noise*(np.random.rand(2*width-2,length)-0.5)*3*np.sqrt(3)/2 #Factor to make flux from magnetic field
-    random_contribution = np.cumsum(fluxes, axis=0) * ((-1) ** np.arange(fluxes.shape[0]))[:, None]
+    # The next two lines "integrate the fluxes" to obtain the Peierls phases. There is gauge fredom, and we have chosen to fix the gauge
+    # by imposing that the only hoppings that can vary randomly are 1->2 and 3->0 (in the same x). It is easy to derive that the next two lines
+    # do the job.
+    random_contribution = np.cumsum(fluxes, axis=0) * ((-1)**np.arange(fluxes.shape[0]))[:, None]
     random_contribution = np.vstack([np.zeros((1, random_contribution.shape[1])), random_contribution])
     
-    np.random.seed(parameters['seed']) #Set the seed before building the matrix
     peierls_factor = np.sqrt(3)/2*mag_field*3 #The 3 is because the y-direction lattice site is 3a long
 
     hamiltonian = np.zeros(((4*width-2+bottom_bearded+top_bearded)*length,(4*width-2+bottom_bearded+top_bearded)*length),dtype = complex)
@@ -925,7 +928,7 @@ def graphene_spectrum(parameters):
     The units are given by a = 1 (y = 3a), hbar = 1, e = 1, v_F = 1
     -parameters: dict
     Returns
-    -spectrum: numpy matrix of size (4*width-2+bottom_bearded+top_bearded)*length
+    -spectrum: numpy array of size (4*width-2+bottom_bearded+top_bearded)*length
     '''
     parameters['kx'] = 0
     hamiltonian = graphene_square(parameters)
