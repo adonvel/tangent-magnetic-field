@@ -512,7 +512,7 @@ def operators_ribbon(parameters, return_shape = False):
 
     np.random.seed(parameters['seed'])
     fluxes = mag_field*np.ones((Ly,Lx)) + noise*(np.random.rand(Ly,Lx)-0.5*np.ones((Ly,Lx)))
-    a_e, a_n = vector_potential(1,Ly,fluxes, gauge = "Landau")
+    a_e, a_n = vector_potential(Lx,Ly,fluxes, gauge = "Landau")
     #Attach zeros to the Peierls phases to fix their size. Only to the up ones this time.
     a_n = np.concatenate([a_n,np.zeros((1,Lx+1))],axis = 0)
 
@@ -744,6 +744,23 @@ def tangent_states(parameters, kpoint,number_of_bands = int(20)):
             energies[i] = eigenvalues[i]
 
     return energies, states_shaped, degenerate_indices
+
+def tan_square_spectrum(parameters,number_of_bands):
+    '''
+    Finds the spectrum of a tangent fermions square
+    with zigzag boundary conditions in x direction
+    and open in y direction
+    in a uniform magnetic field.
+    The units are given by a = 1, hbar = 1, e = 1, v_F = 1
+    -parameters: dict
+    Returns
+    -spectrum: numpy array of size (4*width-2+bottom_bearded+top_bearded)*length
+    '''
+    parameters['kx'] = 0
+    Phi, H, P, deleted_indices = operators_ribbon(parameters)
+    spectrum = sla.eigsh(H, M=P, k = number_of_bands, tol = 1e-7, sigma = 0.0000001, which = 'LM',return_eigenvectors = False)
+
+    return spectrum
 
 
 ######################################## GRAPHENE
