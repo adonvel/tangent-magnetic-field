@@ -7,12 +7,12 @@ import magnetic_boundaries as mb
 job = int(sys.argv[1])
 
 parameters = dict(
-    Ly = 31,
-    Lx = 31,
+    Ly = 151,
+    Lx = 51,
     theta_top = 0,
     theta_bot = 0,
     mag_field = 0.1,
-    noise = 0,
+    noise = 0.1,
     seed = job,
     mass = 0,
 )

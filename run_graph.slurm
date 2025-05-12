@@ -21,6 +21,6 @@ export CWD=$(pwd)
 echo "[$SHELL] ## current working directory: "$CWD
 # Run the file
 echo "[$SHELL] ## Run script"
-srun python3 disorder.py $SLURM_ARRAY_TASK_ID
+srun python3 graph_disorder.py $SLURM_ARRAY_TASK_ID
 echo "[$SHELL] ## Script finished"
 echo "[$SHELL] #### Finished Python test. Have a nice day"
